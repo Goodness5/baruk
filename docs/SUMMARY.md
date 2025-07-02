@@ -1,5 +1,9 @@
 # Summary
 
-* [Baruk AMM](BarukAMM_Docs.markdown)
-* [Baruk Lending](BarukLending_Docs.markdown)
-* [Baruk Yield](BarukYield_Docs.markdown) 
+* [Baruk Protocol Overview](BarukProtocolOverview.md)
+* [BarukAMM](BarukAMM.md)
+* [BarukRouter](BarukRouter.md)
+* [BarukYieldFarm](BarukYieldFarm.md)
+* [BarukLending](BarukLending.md)
+* [BarukLimitOrder](BarukLimitOrder.md)
+* [Oracle Integration](OracleIntegration.md) 

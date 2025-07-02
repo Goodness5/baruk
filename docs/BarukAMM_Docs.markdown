@@ -1,7 +1,6 @@
 # 🎨 BARUK AUTOMATED MARKET MAKER
 
-> [!INFO]
-> **Baruk AMM** is a smart contract for decentralized token swaps and liquidity provision on Sei Network.  
+> **Info:** Baruk AMM is a smart contract for decentralized token swaps and liquidity provision on Sei Network.  
 > **Formula:** `x * y = k` &nbsp; | &nbsp; **Fee:** 0.3% &nbsp; | &nbsp; **Optimized for:** 🚄 High-throughput, low-fee
 
 ---
@@ -10,8 +9,7 @@
 
 The Baruk Automated Market Maker (AMM) is a smart contract deployed on the Sei Network's EVM-compatible blockchain, enabling decentralized token swaps and liquidity provision for a single token pair (e.g., SEI/BRK). It uses the constant product formula (`x * y = k`) with a 0.3% swap fee, optimized for Sei's high-throughput, low-fee environment. Built for the Baruk hackathon project, it emphasizes security, gas efficiency, and modularity.
 
-> [!TIP]
-> **Key Features**
+> **Tip:**
 > - 🔄 Token Swaps: Swap tokens (e.g., SEI ↔ BRK) with a 0.3% fee for liquidity providers.
 > - 💧 Liquidity Management: Add or remove liquidity with proportional token deposits/withdrawals.
 > - ⚖️ Constant Product Formula: Ensures price stability using `x * y = k`.
@@ -50,7 +48,7 @@ The Baruk Automated Market Maker (AMM) is a smart contract deployed on the Sei N
 
 ## ❗ Custom Errors
 
-> [!WARNING]
+> **Warning:**
 > - `ArithmeticOverflow(string operation)`: Reverts on arithmetic overflow/underflow.
 > - `DivisionByZero()`: Reverts on division by zero.
 > - `InvalidToken()`: Reverts if an invalid token address is provided.
@@ -179,7 +177,7 @@ function getReserves() external view returns (uint256 _reserve0, uint256 _reserv
 
 ## 📢 Events
 
-> [!NOTE]
+> **Note:**
 > - **LiquidityAdded**
 >   ```solidity
 >   event LiquidityAdded(address indexed provider, uint256 amount0, uint256 amount1, uint256 liquidity);
