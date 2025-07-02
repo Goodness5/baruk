@@ -1,10 +1,66 @@
 # BarukRouter
 
-## Why We Built a Router (And Why It's Different)
+## The Router: Making DeFi Accessible
 
-Most DeFi protocols make you interact directly with their core contracts. That's fine for developers, but terrible for users. We built a router that actually makes sense.
+Most DeFi protocols are a pain to use. You need to know exactly which contract to call, handle approvals, manage slippage—it's a mess. The Router fixes this by providing a clean, simple interface for all AMM operations.
 
-## The Router Pattern: Why It Matters
+## Why We Built a Router
+
+**DeFi should be simple.** Users shouldn't need to understand the difference between `addLiquidity` and `_addLiquidity`. They just want to:
+- Add liquidity to a pool
+- Swap tokens
+- Remove liquidity
+
+The Router handles all the complexity behind a clean interface.
+
+## The Pair Factory Pattern
+
+```solidity
+mapping(address => mapping(address => address)) public pairs;
+```
+
+**We don't pre-deploy pairs.** Instead, we create them on-demand when someone adds liquidity. This saves gas and keeps the protocol lean.
+
+**How it works:**
+1. User calls `addLiquidity(tokenA, tokenB, amountA, amountB)`
+2. Router checks if pair exists
+3. If not, creates new AMM contract
+4. Adds liquidity to the pair
+5. Returns pair address and LP tokens
+
+## Slippage Protection
+
+```solidity
+function swap(
+    address tokenIn,
+    address tokenOut,
+    uint256 amountIn,
+    uint256 minAmountOut,  // <-- Slippage protection
+    uint256 deadline,       // <-- Time protection
+    address to
+) public returns (uint256 amountOut)
+```
+
+**Two layers of protection:**
+- **`minAmountOut`:** Ensures you get at least this much (prevents MEV sandwich attacks)
+- **`deadline`:** Ensures your transaction doesn't sit in mempool forever
+
+## Governance Controls
+
+```solidity
+address public governance;
+bool public paused;
+
+modifier onlyGovernance() { ... }
+modifier whenNotPaused() { ... }
+```
+
+**We're not anarchists.** The protocol needs governance for:
+- Emergency pauses (if something goes wrong)
+- Parameter updates (fees, limits, etc.)
+- Security upgrades
+
+## Gas Optimization
 
 ```solidity
 function addLiquidity(
@@ -12,83 +68,38 @@ function addLiquidity(
     address tokenB,
     uint256 amountA,
     uint256 amountB
-) external returns (address pair, uint256 liquidity)
+) public returns (address pair, uint256 liquidity)
 ```
 
-**What's different here?** Most routers just forward calls to the AMM. Ours does more:
-- Handles token transfers and approvals automatically
-- Creates pairs if they don't exist
-- Mints LP tokens directly to the user (not the router)
+**We batch operations to save gas:**
+- Check/create pair
+- Transfer tokens
+- Add liquidity
+- All in one transaction
 
-**Why not just call the AMM directly?** Because users shouldn't have to:
-- Figure out which AMM contract to call
-- Handle their own token approvals
-- Deal with pair creation logic
-- Worry about slippage and deadlines
-
-## Flash Swaps: The Secret Weapon
+## Error Handling
 
 ```solidity
-function flashSwap(
-    address tokenA,
-    address tokenB,
-    uint256 amount0Out,
-    uint256 amount1Out,
-    address to,
-    bytes calldata data
-) external
-```
-
-**Flash swaps are where the magic happens.** You can:
-- Borrow tokens without collateral
-- Execute arbitrage strategies
-- Build complex DeFi primitives
-- All in one atomic transaction
-
-**Why did we add this?** Because we want developers to build cool stuff on top of our protocol. Flash swaps enable the kind of composability that makes DeFi interesting.
-
-## Deadline Protection: Why We Care
-
-```solidity
+require(pairs[tokenA][tokenB] != address(0), "Pair does not exist");
+require(amountOut >= minAmountOut, "Insufficient output amount");
 require(block.timestamp <= deadline, "Transaction expired");
 ```
 
-**MEV attacks are real.** Without deadline protection, your transaction can sit in the mempool and get sandwiched. We force users to think about timing, which protects them from:
-- Front-running
-- Sandwich attacks
-- Stale transactions
+**Clear, actionable errors.** Users need to know exactly what went wrong and how to fix it.
 
-## Governance: Why We Can Pause
+## Events for Transparency
 
 ```solidity
-function pause() external onlyGovernance
+event PairCreated(address indexed tokenA, address indexed tokenB, address pair);
+event Swap(address indexed user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut);
 ```
 
-**Sometimes you need to hit the emergency brake.** We can pause the router if:
-- There's a critical bug
-- The market is going crazy
-- We need to upgrade something
+**Everything is logged.** This helps with:
+- Analytics and tracking
+- Debugging issues
+- Community transparency
 
-**Why is this important?** Because DeFi is still experimental. Having an emergency pause is responsible, not centralized.
-
-## The Integration Magic
-
-Our router doesn't just work with our AMM—it's designed to work with:
-- Yield farming (stake LP tokens immediately)
-- Lending protocols (use LP tokens as collateral)
-- Limit orders (execute via router)
-- Any future DeFi primitive we build
-
-**The router is the glue that holds everything together.** It's not just a convenience layer—it's the entry point to the entire Baruk ecosystem.
-
-## Why This Matters
-
-- **User Experience:** No one wants to interact with raw smart contracts
-- **Security:** Centralized approval and deadline handling
-- **Composability:** Flash swaps enable complex strategies
-- **Flexibility:** Works with any DeFi protocol that follows standards
-
-This router isn't just a wrapper—it's the foundation for building the next generation of DeFi applications.
+The Router is the user-friendly face of our DeFi protocol. It handles the complexity so users can focus on what matters—their DeFi strategies.
 
 ## Purpose & Rationale
 BarukRouter is the user-facing entry point for liquidity provision and swaps. It abstracts away the complexity of interacting directly with the AMM, ensuring safe, efficient, and user-friendly operations.

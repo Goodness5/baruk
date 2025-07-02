@@ -1,126 +1,132 @@
 # Oracle Integration
 
-## Why We Built Our Own Oracle System
+## Why Oracles Matter in DeFi
 
-Most DeFi protocols just use whatever oracle is available. We wanted something more sophisticated that actually protects users from manipulation.
+DeFi protocols need reliable price data. Without it, they can't:
+- Calculate collateralization ratios
+- Trigger liquidations
+- Determine swap rates
+- Manage risk
 
-## The TWAP Approach: Why We Chose It
+We integrate with the Sei oracle system to get manipulation-resistant price feeds.
+
+## The TWAP Integration
 
 ```solidity
-function getTokenTwap(address token) public view returns (uint256 price, int64 oracleLastUpdate)
+interface ISeiOracle {
+    function getOracleTwaps(uint64 lookbackSeconds) external view returns (OracleTwap[] memory);
+    function getExchangeRates() external view returns (DenomOracleExchangeRatePair[] memory);
+}
+
+struct OracleTwap {
+    string denom;
+    string price;
+    int64 timestamp;
+}
 ```
 
-**Most oracles give you spot prices.** We use TWAP (Time-Weighted Average Price) because:
+**Why TWAP (Time-Weighted Average Price)?** Because:
 - Spot prices can be manipulated with flash loans
-- TWAP smooths out volatility and manipulation attempts
+- TWAP smooths out price volatility
 - It gives users time to react to price changes
 - It's more resistant to market manipulation
 
-**The trade-off:** TWAP is slightly delayed, but the security benefits far outweigh the latency cost.
-
-## The Staleness Check: Why It's Critical
+## The Price Fetching Logic
 
 ```solidity
-require(block.timestamp - uint64(oracleLastUpdate) <= PRICE_STALENESS_THRESHOLD, "Stale price");
+function getTokenTwap(address token) public view returns (uint256 price, int64 oracleLastUpdate) {
+    string memory denom = tokenDenoms[token];
+    require(bytes(denom).length > 0, "Token not configured");
+    
+    ISeiOracle oracle = ISeiOracle(ORACLE_ADDRESS);
+    OracleTwap[] memory twaps = oracle.getOracleTwaps(3600); // 1 hour lookback
+    
+    for (uint i = 0; i < twaps.length; i++) {
+        if (keccak256(bytes(twaps[i].denom)) == keccak256(bytes(denom))) {
+            return (uint256(keccak256(bytes(twaps[i].price))), twaps[i].timestamp);
+        }
+    }
+    revert("Price not found");
+}
 ```
 
-**Stale prices are dangerous.** If the oracle stops updating, we could:
-- Accept overvalued collateral
-- Liquidate positions unfairly
-- Make bad lending decisions
+**How it works:**
+1. Map token address to oracle denom
+2. Fetch TWAP data from Sei oracle
+3. Find the matching denom
+4. Return price and timestamp
 
-**The solution:** We check that prices are recent (within 60 seconds). If they're stale, we revert the transaction.
+## Staleness Protection
 
-**This protects users from oracle failures and manipulation.**
+```solidity
+require(block.timestamp - oracleLastUpdate <= ORACLE_STALENESS_PERIOD, "Stale oracle");
+```
 
-## The Denom Mapping: Why We Need It
+**Why check for staleness?** Because:
+- Old prices can be inaccurate
+- Market conditions change rapidly
+- Stale data can lead to bad decisions
+- It protects against oracle failures
+
+## The Denom Mapping System
 
 ```solidity
 mapping(address => string) public tokenDenoms;
+
+function setTokenDenom(address token, string memory denom) external onlyGovernance {
+    tokenDenoms[token] = denom;
+    emit TokenDenomSet(token, denom);
+}
 ```
 
-**Different tokens have different oracle symbols.** We need to map token addresses to their oracle denoms.
-
-**Why is this important?** Because:
-- Not all tokens are tracked by the oracle
-- Different tokens might use different naming conventions
-- We need to ensure we're getting the right price for the right token
-
-**The mapping is governance-controlled** so we can add new tokens as needed.
-
-## The Integration Points: Why They Matter
-
-**Our oracle isn't just for pricing—it's for risk management:**
-
-- **AMM:** Uses oracle for TWAP calculations and analytics
-- **Lending:** Uses oracle for collateralization checks and liquidation
-- **Future protocols:** Can use the same oracle for consistent pricing
-
-**This creates a unified pricing system** across the entire Baruk ecosystem.
-
-## Why This Matters for Hackathons
-
-- **Innovation:** TWAP-based oracle system for manipulation resistance
-- **Security:** Staleness checks prevent oracle failures
-- **Composability:** Unified pricing across all protocols
-- **Reliability:** Robust price feeds for risk management
-
-This isn't just an oracle—it's a security-first pricing system that protects users from manipulation and ensures fair protocol operation.
-
----
-
-## Key Functions (with Code Examples)
-
-### getTokenTwap
-```solidity
-function getTokenTwap(address token) public view returns (uint256 price, int64 oracleLastUpdate)
-```
-**Usage Example:**
-```solidity
-// Fetch the TWAP for an LP token
-(uint256 price, int64 lastUpdate) = lending.getTokenTwap(lpToken);
-```
-**Logic:**
-- Looks up the denom for the token, fetches TWAP from oracle, checks staleness.
-- Reverts if price is stale or denom is missing.
-
-**Math:**
-- **Staleness check:**
-  \[
-  \text{require}(block.timestamp - oracleLastUpdate \leq PRICE\_STALENESS\_THRESHOLD)
-  \]
-
-### Events
-- (Oracle contracts typically do not emit events, but all price-dependent actions in AMM/Lending emit events for monitoring.)
-
----
-
-## Security & Edge Cases
-- **Staleness:** Operations revert if price data is stale.
-- **Edge Cases:** Handles missing denoms, zero price, and oracle downtime.
-
----
-
-## Full Example: Fetch and Use Oracle Price
-```solidity
-// Governance sets token denom
-lending.setTokenDenom(lpToken, "LP_DENOM");
-
-// Fetch price
-(uint256 price, int64 lastUpdate) = lending.getTokenTwap(lpToken);
-
-// Use price in collateral check
-require(price > 0 && block.timestamp - uint64(lastUpdate) <= 60, "Stale or missing price");
-```
-
----
-
-## Governance
-- **Set Denoms:** Governance can update token-denom mappings.
-- **Update Oracle Address:** (If upgradeable) Governance can update the oracle source.
-
----
+**Why map tokens to denoms?** Because:
+- Different tokens have different oracle symbols
+- Governance can add new tokens
+- It's flexible and extensible
+- It works with any oracle system
 
 ## Integration Points
-- **AMM:** Uses oracle for TWAP and analytics.
-- **Lending:** Uses oracle for collateral and borrow risk checks. 
+
+**Lending Protocol:**
+- Collateralization checks
+- Liquidation triggers
+- Risk management
+
+**AMM:**
+- Price discovery
+- Fee calculations
+- Market analysis
+
+**Yield Farm:**
+- Asset valuation
+- Reward calculations
+- Portfolio tracking
+
+## Security Considerations
+
+```solidity
+modifier onlyGovernance() { ... }
+require(bytes(denom).length > 0, "Token not configured");
+require(block.timestamp - oracleLastUpdate <= ORACLE_STALENESS_PERIOD, "Stale oracle");
+```
+
+**We protect against:**
+- Unauthorized denom changes
+- Unconfigured tokens
+- Stale price data
+- Oracle manipulation
+
+## Governance Controls
+
+```solidity
+function setTokenDenom(address token, string memory denom) external onlyGovernance
+function setOracleStalenessPeriod(uint256 newPeriod) external onlyGovernance
+```
+
+**Governance can:**
+- Add new token-oracle mappings
+- Adjust staleness periods
+- Update oracle addresses
+- Emergency pause oracle usage
+
+The oracle integration provides the reliable price data that makes our DeFi ecosystem secure and functional. 

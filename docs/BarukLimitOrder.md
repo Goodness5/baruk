@@ -1,74 +1,190 @@
 # BarukLimitOrder
 
-## Why We Built Limit Orders (And Why They're Different)
+## Limit Orders: Bringing CEX Features to DeFi
 
-Most DeFi protocols only support market orders—you get whatever price is available right now. We wanted to give users more control over their trading.
+Most DEXs only support market orders—you get whatever price is available right now. But sophisticated traders need limit orders. We built a limit order system that works with our AMM and router.
 
-## The On-Chain Order Book: Why It Matters
-
-```solidity
-function placeOrder(address tokenIn, address tokenOut, uint256 amountIn, uint256 minOut) external returns (uint256 orderId)
-```
-
-**Most DEXs don't have limit orders.** Why did we add them? Because:
-- Market orders can get front-run
-- Users want to set their own prices
-- It enables more sophisticated trading strategies
-- It reduces MEV and improves user experience
-
-**The innovation:** Orders are stored on-chain, not in a centralized order book. This means:
-- No counterparty risk
-- Transparent execution
-- No manipulation by centralized parties
-
-## The Execution Logic: Why Governance Controls It
+## The Order Structure
 
 ```solidity
-function executeOrder(uint256 orderId, uint256 minOut) external
+struct Order {
+    address user;
+    address tokenIn;
+    address tokenOut;
+    uint256 amountIn;
+    uint256 minAmountOut;
+    uint256 orderId;
+    bool executed;
+    bool cancelled;
+}
 ```
 
-**Only governance can execute orders.** This might seem centralized, but it's actually a security feature:
+**Why this structure?** Because we need to track:
+- Who placed the order
+- What they want to trade
+- How much they're willing to pay
+- Whether it's been filled or cancelled
 
-- Prevents order manipulation
-- Ensures fair execution
-- Allows for circuit breakers during extreme volatility
-- Protects against flash loan attacks
-
-**The trade-off:** Slightly less decentralized for much better security and user protection.
-
-## The Integration with Router: The Smart Move
+## The Execution Logic
 
 ```solidity
-// Orders are executed via the router
-router.swap(tokenIn, tokenOut, amountIn, minOut, deadline, recipient);
+function executeOrder(uint256 orderId, uint256 minAmountOut) external onlyGovernance {
+    Order storage order = orders[orderId];
+    require(!order.executed && !order.cancelled, "Order not available");
+    require(minAmountOut >= order.minAmountOut, "Slippage too high");
+    
+    // Execute the swap via router
+    uint256 amountOut = router.swap(
+        order.tokenIn,
+        order.tokenOut,
+        order.amountIn,
+        minAmountOut,
+        block.timestamp + 600,
+        order.user
+    );
+    
+    // Calculate and collect protocol fee
+    uint256 protocolFee = (amountOut * protocolFeeBps) / 10000;
+    uint256 userAmount = amountOut - protocolFee;
+    
+    // Transfer tokens to user and protocol
+    IERC20(order.tokenOut).safeTransfer(order.user, userAmount);
+    IERC20(order.tokenOut).safeTransfer(treasury, protocolFee);
+    
+    order.executed = true;
+    emit OrderExecuted(orderId, order.user, order.tokenIn, order.tokenOut, order.amountIn, userAmount, protocolFee);
+}
 ```
 
-**We didn't build a separate execution engine.** Instead, we use our existing router. This means:
-- Reuse of battle-tested swap logic
-- Consistent fee structure
-- Same slippage protection
-- Unified event logging
+**How execution works:**
+1. Governance (or authorized executor) calls `executeOrder`
+2. Router performs the actual swap
+3. Protocol fee is deducted from output
+4. User gets their tokens, protocol gets fee
+5. Order is marked as executed
 
-**Why reinvent the wheel?** The router already handles all the complex swap logic. We just need to trigger it when conditions are right.
-
-## The Protocol Fee: Why We Charge It
+## The Fee Model
 
 ```solidity
-uint256 protocolFee = (amountIn * protocolFeeBps) / 10000;
+uint256 public protocolFeeBps = 50; // 0.5%
+
+function setProtocolFeeBps(uint256 newFeeBps) external onlyGovernance {
+    require(newFeeBps <= 1000, "Fee too high"); // Max 10%
+    protocolFeeBps = newFeeBps;
+}
 ```
 
-**Limit orders have costs:** gas for storage, execution, and monitoring. The protocol fee covers these costs and discourages spam orders.
+**Why charge fees on limit orders?** Because:
+- Limit orders provide value (price discovery, liquidity)
+- Fees fund protocol development
+- It discourages spam orders
+- It aligns incentives between users and protocol
 
-**The fee is small but important.** It ensures the protocol can sustainably offer limit order functionality.
+## The Cancellation System
 
-## Why This Matters for Hackathons
+```solidity
+function cancelOrder(uint256 orderId) external {
+    Order storage order = orders[orderId];
+    require(order.user == msg.sender, "Not your order");
+    require(!order.executed && !order.cancelled, "Order not available");
+    
+    order.cancelled = true;
+    
+    // Return tokens to user
+    IERC20(order.tokenIn).safeTransfer(order.user, order.amountIn);
+    
+    emit OrderCancelled(orderId, order.user);
+}
+```
 
-- **Innovation:** On-chain limit orders are rare in DeFi
-- **User Experience:** Better control over trading execution
-- **Security:** Governance-controlled execution prevents manipulation
-- **Composability:** Works seamlessly with existing AMM and router
+**Users can cancel their orders anytime.** This is important because:
+- Market conditions change
+- Users might change their mind
+- It prevents stuck orders
 
-This isn't just a limit order system—it's a more sophisticated trading primitive that gives users real control over their DeFi experience.
+## The Router Integration
+
+```solidity
+function executeOrder(uint256 orderId, uint256 minAmountOut) external onlyGovernance {
+    // ... validation logic
+    
+    uint256 amountOut = router.swap(
+        order.tokenIn,
+        order.tokenOut,
+        order.amountIn,
+        minAmountOut,
+        block.timestamp + 600,
+        order.user
+    );
+    
+    // ... fee logic
+}
+```
+
+**We use the router for execution.** This means:
+- All swaps go through the same AMM logic
+- Slippage protection is consistent
+- Gas optimization is shared
+- Integration is seamless
+
+## Security Features
+
+```solidity
+modifier onlyGovernance() { ... }
+require(!order.executed && !order.cancelled, "Order not available");
+require(minAmountOut >= order.minAmountOut, "Slippage too high");
+```
+
+**We protect against:**
+- Unauthorized execution (only governance)
+- Double execution
+- Excessive slippage
+- Invalid orders
+
+## The Order ID System
+
+```solidity
+uint256 public nextOrderId = 1;
+
+function placeOrder(address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut) external returns (uint256 orderId) {
+    orderId = nextOrderId++;
+    // ... rest of logic
+}
+```
+
+**Simple but effective.** Each order gets a unique ID that:
+- Can't be predicted
+- Can't be manipulated
+- Is easy to track
+- Works with events
+
+## Events for Transparency
+
+```solidity
+event OrderPlaced(uint256 indexed orderId, address indexed user, address tokenIn, address tokenOut, uint256 amountIn, uint256 minAmountOut);
+event OrderExecuted(uint256 indexed orderId, address indexed user, address tokenIn, address tokenOut, uint256 amountIn, uint256 amountOut, uint256 protocolFee);
+event OrderCancelled(uint256 indexed orderId, address indexed user);
+```
+
+**Everything is logged.** This helps with:
+- Order tracking
+- Analytics
+- Debugging
+- Community transparency
+
+## Governance Controls
+
+```solidity
+function setProtocolFeeBps(uint256 newFeeBps) external onlyGovernance
+function setTreasury(address newTreasury) external onlyGovernance
+```
+
+**Governance can adjust:**
+- Protocol fee rates
+- Treasury address
+- Execution parameters
+
+The limit order system brings sophisticated trading features to DeFi while maintaining security and transparency.
 
 ## Purpose & Rationale
 BarukLimitOrder enables users to place on-chain limit orders for swaps, providing more control over execution price and timing. It is designed for flexibility, security, and seamless integration with the Baruk protocol.

@@ -89,13 +89,6 @@ event LiquidityAdded(address indexed user, uint256 amount0, uint256 amount1, uin
 
 The math is standard Uniswap V2 stuff. The innovation is in the flexibility and composability.
 
-## Why This Matters for Hackathons
-
-- **Composability:** The `to` parameter lets you build complex DeFi strategies
-- **Innovation:** Split fees create better incentives than standard AMMs
-- **Security:** We thought about attacks before they happened
-- **Transparency:** Everything is logged and verifiable
-
 This isn't just another AMM—it's a building block for the next generation of DeFi protocols.
 
 ## Purpose & Rationale

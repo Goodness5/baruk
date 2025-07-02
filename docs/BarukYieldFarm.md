@@ -1,87 +1,141 @@
 # BarukYieldFarm
 
-## Why Our Yield Farm is Different
+## Yield Farming: Incentivizing Liquidity
 
-Most yield farms are pretty basic—stake tokens, get rewards. We wanted something more sophisticated that actually incentivizes the right behavior.
+Most DeFi protocols struggle with liquidity. Users provide liquidity, but there's no incentive to keep it there. We solve this with a yield farming system that rewards active participation.
 
-## The Authorization System: Why We Added It
+## The Multi-Pool Architecture
 
 ```solidity
+struct Pool {
+    address lpToken;
+    address rewardToken;
+    uint256 rewardPerSecond;
+    uint256 lastRewardTime;
+    uint256 accRewardPerShare;
+    uint256 totalStaked;
+}
+```
+
+**Why multiple pools?** Different assets have different risk profiles and should earn different rewards. A stablecoin pool might earn 5% APY, while a volatile token pool might earn 20% APY.
+
+## Reward Distribution: The Math
+
+```solidity
+uint256 multiplier = block.timestamp - pool.lastRewardTime;
+uint256 reward = multiplier * pool.rewardPerSecond;
+pool.accRewardPerShare += (reward * 1e12) / pool.totalStaked;
+```
+
+**How rewards work:**
+1. Each pool has a `rewardPerSecond` rate
+2. Rewards accumulate based on time and total staked
+3. When you stake/unstake/claim, your rewards are calculated based on your share
+4. Your share = `user.amount * pool.accRewardPerShare / 1e12`
+
+## The Authorization System
+
+```solidity
+mapping(address => bool) public authorizedLenders;
+
 function setAuthorizedLender(address lender, bool authorized) external onlyGovernance
 ```
 
-**Most yield farms don't have this.** Why did we add it? Because we're building a lending protocol that needs to access farm reserves.
+**Why do we need this?** Our lending protocol needs to borrow from the farm's reserves. But we don't want just anyone calling `lendOut`. Only authorized contracts (like our lending protocol) can borrow.
 
-**The problem:** If anyone could call `lendOut`, they could drain the farm. We need controlled access.
+**This is a security feature, not a limitation.** It prevents:
+- Unauthorized borrowing
+- Protocol manipulation
+- Flash loan attacks
 
-**The solution:** Only authorized lending contracts can borrow from the farm. This creates a secure bridge between staking and lending.
-
-## Reward Rate Validation: Why Zero is Bad
-
-```solidity
-require(rewardRate > 0, "Zero reward rate");
-```
-
-**This seems obvious, right?** But most protocols don't check this. Why do we care?
-
-- A pool with zero rewards is useless
-- It wastes gas and confuses users
-- It could be used for attacks or manipulation
-
-**We're being explicit about what we want:** active, incentivized pools that actually reward users.
-
-## The Staking Logic: Why It's Simple But Smart
+## Staking and Unstaking Logic
 
 ```solidity
-function stake(uint256 poolId, uint256 amount) external
+function stake(uint256 poolId, uint256 amount) public {
+    Pool storage pool = pools[poolId];
+    UserInfo storage user = userInfo[poolId][msg.sender];
+    
+    updatePool(poolId);
+    if (user.amount > 0) {
+        uint256 pending = (user.amount * pool.accRewardPerShare / 1e12) - user.rewardDebt;
+        if (pending > 0) {
+            safeRewardTransfer(msg.sender, pending);
+        }
+    }
+    // ... rest of staking logic
+}
 ```
 
-**We kept it simple on purpose.** No complex vesting schedules, no lock periods, no weird tokenomics.
+**Why update rewards before staking?** Because:
+- Rewards are calculated based on your staked amount
+- If you don't update first, you lose rewards for the time you were staked
+- This ensures fair distribution
 
-**Why?** Because:
-- Users should be able to enter and exit freely
-- Complex systems create more attack vectors
-- Simple systems are easier to audit and understand
-
-**Sometimes the best innovation is knowing what NOT to add.**
-
-## Reward Calculation: The Fair Way
+## Emergency Withdraw
 
 ```solidity
-uint256 reward = (userStake * rewardRate * timeElapsed) / totalStaked;
+function emergencyWithdraw(uint256 poolId) public {
+    Pool storage pool = pools[poolId];
+    UserInfo storage user = userInfo[poolId][msg.sender];
+    
+    uint256 amount = user.amount;
+    user.amount = 0;
+    user.rewardDebt = 0;
+    
+    pool.lpToken.safeTransfer(msg.sender, amount);
+    emit EmergencyWithdraw(msg.sender, poolId, amount);
+}
 ```
 
-**This is proportional and time-weighted.** Every user gets their fair share based on:
-- How much they staked
-- How long they staked
-- The total pool size
+**Why emergency withdraw?** Sometimes things go wrong. Users should always be able to get their tokens back, even if the reward system breaks.
 
-**No favoritism, no manipulation, no weird edge cases.** Just fair rewards for honest participation.
-
-## Integration with Lending: The Killer Feature
+## The Lending Integration
 
 ```solidity
-function lendOut(address token, address to, uint256 amount) external
+function lendOut(address token, uint256 amount) external {
+    require(authorizedLenders[msg.sender], "Not authorized");
+    require(availableReserve[token] >= amount, "Insufficient reserve");
+    
+    availableReserve[token] -= amount;
+    IERC20(token).safeTransfer(msg.sender, amount);
+}
 ```
 
-**This is where it gets interesting.** Our yield farm can lend tokens to our lending protocol. This creates a circular economy:
+**This is where the magic happens.** The lending protocol can borrow from the farm's reserves to provide loans. The farm acts as a liquidity backstop for the entire ecosystem.
 
-1. Users stake tokens in the farm
-2. The farm lends tokens to the lending protocol
-3. Users can borrow against their staked tokens
-4. The lending protocol pays interest back to the farm
-5. Farm users get better rewards
+## Governance Controls
 
-**It's like a DeFi perpetual motion machine.** Each component makes the others more valuable.
+```solidity
+function addPool(address lpToken, address rewardToken, uint256 rewardPerSecond) external onlyGovernance
+function setRewardPerSecond(uint256 poolId, uint256 rewardPerSecond) external onlyGovernance
+```
 
-## Why This Matters for Hackathons
+**Governance can:**
+- Add new pools
+- Adjust reward rates
+- Authorize new lenders
+- Emergency pause
 
-- **Innovation:** The authorization system enables secure cross-protocol integration
-- **Simplicity:** Clean, auditable code without unnecessary complexity
-- **Composability:** Works seamlessly with lending and AMM
-- **Fairness:** Transparent reward distribution
+**Why governance?** Because market conditions change. Sometimes you need to:
+- Increase rewards to attract more liquidity
+- Decrease rewards to control inflation
+- Add new pools for new assets
 
-This isn't just a yield farm—it's the engine that powers the entire Baruk ecosystem.
+## Security Considerations
+
+```solidity
+modifier nonReentrant() { ... }
+require(amount > 0, "Cannot stake 0");
+require(poolId < pools.length, "Pool does not exist");
+```
+
+**We protect against:**
+- Reentrancy attacks
+- Zero amount staking
+- Invalid pool access
+- Overflow/underflow
+
+The yield farm isn't just about rewards—it's about building a sustainable liquidity ecosystem that supports the entire DeFi protocol.
 
 ## Purpose & Rationale
 BarukYieldFarm incentivizes liquidity providers by allowing them to stake LP tokens and earn rewards. It is designed for flexibility, security, and composability with the rest of the Baruk protocol.
