@@ -1,7 +1,22 @@
 # 🎨 BARUK AUTOMATED MARKET MAKER
 
-> **Info:** Baruk AMM is a smart contract for decentralized token swaps and liquidity provision on Sei Network.  
-> **Formula:** `x * y = k` &nbsp; | &nbsp; **Fee:** 0.3% &nbsp; | &nbsp; **Optimized for:** 🚄 High-throughput, low-fee
+---
+
+## 🚀 Deployed Contract Addresses (Sei Testnet)
+
+| Contract      | Address                                    |
+|--------------|---------------------------------------------|
+| Governance   | [0xcc649e2a60ceDE9F7Ac182EAfa2af06655e54F60](https://seitrace.com/address/0xcc649e2a60ceDE9F7Ac182EAfa2af06655e54F60)  |
+| Token0       | [0x8923889697C9467548ABe8E815105993EBC785b6](https://seitrace.com/address/0x8923889697C9467548ABe8E815105993EBC785b6)  |
+| Token1       | [0xF2C653e2a1F21ef409d0489C7c1d754d9f2905F7](https://seitrace.com/address/0xF2C653e2a1F21ef409d0489C7c1d754d9f2905F7)  |
+| Token2       | [0xD6383ef8A67E929274cE9ca05b694f782A5070D7](https://seitrace.com/address/0xD6383ef8A67E929274cE9ca05b694f782A5070D7)  |
+| AMM          | [0x7FE1358Fd97946fCC8f07eb18331aC8Bfe37b7B1](https://seitrace.com/address/0x7FE1358Fd97946fCC8f07eb18331aC8Bfe37b7B1)  |
+| Router       | [0xe605be74ba68fc255dB0156ab63c31b50b336D6B](https://seitrace.com/address/0xe605be74ba68fc255dB0156ab63c31b50b336D6B)  |
+| YieldFarm    | [0x1Ae8eC370795FCF21862Ba486fb44a5219Dea7Ce](https://seitrace.com/address/0x1Ae8eC370795FCF21862Ba486fb44a5219Dea7Ce)  |
+| Lending      | [0x5197d95B4336f1EF6dd0fd62180101021A88E27b](https://seitrace.com/address/0x5197d95B4336f1EF6dd0fd62180101021A88E27b)  |
+| LimitOrder   | [0x3bDdc3fAbf58fDaA6fF62c95b944819cF625c0F4](https://seitrace.com/address/0x3bDdc3fAbf58fDaA6fF62c95b944819cF625c0F4)  |
+| Oracle       | [0x0000000000000000000000000000000000001008](https://seitrace.com/address/0x0000000000000000000000000000000000001008)  |
+| Factory      | [0xCEeC70dF7bC3aEB57F078A1b1BeEa2c6320d8957](https://seitrace.com/address/0xCEeC70dF7bC3aEB57F078A1b1BeEa2c6320d8957)  |
 
 ---
 

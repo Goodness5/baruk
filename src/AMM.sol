@@ -8,17 +8,18 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "./interfaces/ISeiOracle.sol";
 
 contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
-    IERC20 private _token0; // e.g., SEI
-    IERC20 private _token1; // e.g., BRK
-    address public factory; // Factory contract for pool creation
-    address public governance; // Governance address for pause
-    uint256 private _reserve0; // Reserve of token0
-    uint256 private _reserve1; // Reserve of token1
-    uint256 public totalLiquidity; // Total liquidity tokens issued
-    mapping(address => uint256) public liquidityBalance; // Legacy balance tracking
-    uint256 private constant MINIMUM_LIQUIDITY = 10**3; // Prevent division by zero
-    bool public paused; // Pause state for emergency
-    uint256 private _price0CumulativeLast; // Price oracle
+    address public token0;
+    address public token1;
+    bool public initialized;
+    address public factory;
+    address public governance;
+    uint256 private _reserve0;
+    uint256 private _reserve1;
+    uint256 public totalLiquidity;
+    mapping(address => uint256) public liquidityBalance;
+    uint256 private constant MINIMUM_LIQUIDITY = 10**3;
+    bool public paused;
+    uint256 private _price0CumulativeLast;
     uint256 private _price1CumulativeLast;
     uint32 private _lastUpdateTimestamp;
     // Events for analytics/yield/limit order hooks
@@ -62,22 +63,24 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
     uint64 public constant PRICE_LOOKBACK_SECONDS = 60;
     uint64 public constant PRICE_STALENESS_THRESHOLD = 60;
 
+    constructor() ERC20("Baruk AMM LP", "BRK-LP") {}
+
     modifier onlyGovernance() {
-        if (msg.sender != governance) revert NotGovernance();
+        require(msg.sender == governance, "Not governance");
         _;
     }
 
     modifier whenNotPaused() {
-        if (paused) revert ContractPaused();
+        require(paused == false, "Pool paused");
         _;
+        
     }
 
-    constructor(address token0_, address token1_) ERC20("Baruk AMM LP", "BRK-LP") {
-        if (token0_ >= token1_) revert InvalidToken(); // Ensure token order
-        factory = msg.sender;
-        governance = msg.sender;
-        _token0 = IERC20(token0_);
-        _token1 = IERC20(token1_);
+    function initialize(address _token0, address _token1) external {
+        require(!initialized, "Already initialized");
+        token0 = _token0;
+        token1 = _token1;
+        initialized = true;
     }
 
     function updatePriceOracle() internal {
@@ -101,12 +104,7 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
     }
 
     // --- Interface Getters ---
-    function token0() external view override returns (address) {
-        return address(_token0);
-    }
-    function token1() external view override returns (address) {
-        return address(_token1);
-    }
+
     function price0CumulativeLast() external view override returns (uint256) {
         return _price0CumulativeLast;
     }
@@ -138,16 +136,16 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
             if (amount1 < amount1Optimal) revert InsufficientLiquidity();
             liquidity = (amount0 * totalLiquidity) / reserve0;
         }
-        if (!_token0.transferFrom(msg.sender, address(this), amount0)) revert TransferFailed();
-        if (!_token1.transferFrom(msg.sender, address(this), amount1)) revert TransferFailed();
+        if (!IERC20(token0).transferFrom(msg.sender, address(this), amount0)) revert TransferFailed();
+        if (!IERC20(token1).transferFrom(msg.sender, address(this), amount1)) revert TransferFailed();
         if (_reserve0 + amount0 < _reserve0) revert ArithmeticOverflow("reserve0 addition");
         if (_reserve1 + amount1 < _reserve1) revert ArithmeticOverflow("reserve1 addition");
         if (totalLiquidity + liquidity < totalLiquidity) revert ArithmeticOverflow("totalLiquidity addition");
         _reserve0 += amount0;
         _reserve1 += amount1;
         totalLiquidity += liquidity;
-        _mint(to, liquidity); // Issue ERC20 liquidity tokens to 'to'
-        liquidityBalance[to] += liquidity; // Maintain legacy tracking
+        _mint(to, liquidity);
+        liquidityBalance[to] += liquidity;
         updatePriceOracle();
         emit LiquidityAdded(to, amount0, amount1, liquidity, _reserve0, _reserve1);
         emit AnalyticsAddLiquidity(to, amount0, amount1, liquidity, block.number);
@@ -168,8 +166,8 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
         _reserve0 -= amount0;
         _reserve1 -= amount1;
         _burn(msg.sender, liquidity); // Burn ERC20 liquidity tokens
-        if (!_token0.transfer(msg.sender, amount0)) revert TransferFailed();
-        if (!_token1.transfer(msg.sender, amount1)) revert TransferFailed();
+        if (!IERC20(token0).transfer(msg.sender, amount0)) revert TransferFailed();
+        if (!IERC20(token1).transfer(msg.sender, amount1)) revert TransferFailed();
         updatePriceOracle();
         emit LiquidityRemoved(msg.sender, amount0, amount1, liquidity, _reserve0, _reserve1);
         emit AnalyticsRemoveLiquidity(msg.sender, amount0, amount1, liquidity, block.number);
@@ -199,10 +197,10 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
         address recipient
     ) internal returns (uint256 amountOut) {
         if (amountIn == 0) revert InsufficientLiquidity();
-        if (tokenIn != address(_token0) && tokenIn != address(_token1)) revert InvalidToken();
-        bool isToken0 = tokenIn == address(_token0);
-        IERC20 tokenInContract = isToken0 ? _token0 : _token1;
-        IERC20 tokenOutContract = isToken0 ? _token1 : _token0;
+        if (tokenIn != address(IERC20(token0)) && tokenIn != address(IERC20(token1))) revert InvalidToken();
+        bool isToken0 = tokenIn == address(IERC20(token0));
+        IERC20 tokenInContract = isToken0 ? IERC20(token0) : IERC20(token1);
+        IERC20 tokenOutContract = isToken0 ? IERC20(token1) : IERC20(token0);
         // Assume tokens have already been transferred in by the router
         uint256 amountInActual = amountIn;
         uint256 amountInWithFee = _handleFeesAndReturnNetIn(amountInActual, recipient);
@@ -288,7 +286,7 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
 
     // Flash loan logic
     function flashLoan(address token, uint256 amount, bytes calldata data) external nonReentrant {
-        require(token == address(_token0) || token == address(_token1), "Invalid token");
+        require(token == address(IERC20(token0)) || token == address(IERC20(token1)), "Invalid token");
         uint256 balanceBefore = IERC20(token).balanceOf(address(this));
         require(balanceBefore >= amount, "Insufficient liquidity");
         uint256 fee = (amount * flashLoanFeeBps) / 10000;
@@ -306,7 +304,7 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
         require(reward > 0, "No reward");
         lpRewards[msg.sender] = 0;
         // Transfer reward in token0 (or choose a reward token logic)
-        require(_token0.transfer(msg.sender, reward), "Reward transfer failed");
+        require(IERC20(token0).transfer(msg.sender, reward), "Reward transfer failed");
         emit LPRewardClaimed(msg.sender, reward);
     }
 
@@ -316,7 +314,7 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
         uint256 amount = protocolFeesAccrued;
         require(amount > 0, "No fees");
         protocolFeesAccrued = 0;
-        require(_token0.transfer(protocolTreasury, amount), "Transfer failed");
+        require(IERC20(token0).transfer(protocolTreasury, amount), "Transfer failed");
         emit ProtocolFeeClaimed(protocolTreasury, amount);
     }
 
@@ -348,5 +346,10 @@ contract BarukAMM is IBarukAMM, ReentrancyGuard, ERC20 {
             removeLiquidity(liquidities[i]);
         }
         emit BatchRemoveLiquidity(msg.sender, liquidities.length);
+    }
+
+    function setGovernance(address newGovernance) public {
+        require(governance == address(0) || msg.sender == governance, "Not allowed");
+        governance = newGovernance;
     }
 }

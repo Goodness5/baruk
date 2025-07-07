@@ -7,6 +7,7 @@ import "../src/AMM.sol";
 import "../src/BarukYieldFarm.sol";
 import "../src/BarukLending.sol";
 import "../src/BarukLimitOrder.sol";
+import "../src/BarukAMMFactory.sol";
 import "./mocks/MockERC20.sol";
 import "../src/interfaces/ISeiOracle.sol";
 
@@ -36,6 +37,8 @@ contract IntegrationTest is Test {
     address token0;
     address token1;
     address token2;
+    BarukAMMFactory factory;
+    BarukAMM ammImpl;
 
     function setUp() public {
         user1 = address(0x1);
@@ -62,14 +65,18 @@ contract IntegrationTest is Test {
             vm.deal(allHolders[i], max);
         }
 
-        // Deploy contracts
-        router = new BarukRouter();
+        // Deploy AMM implementation and factory, then router
+        ammImpl = new BarukAMM();
+        factory = new BarukAMMFactory(address(ammImpl));
+        router = new BarukRouter(address(factory));
         address t0 = token0;
         address t1 = token1;
         if (t0 >= t1) {
             (t0, t1) = (t1, t0);
         }
-        amm = new BarukAMM(t0, t1);
+        // Deploy AMM via factory (minimal proxy)
+        address pair = factory.createPair(t0, t1);
+        amm = BarukAMM(pair);
         farm = new BarukYieldFarm(address(amm));
         lending = new BarukLending(address(farm));
         limitOrder = new BarukLimitOrder(address(router));
@@ -115,53 +122,52 @@ contract IntegrationTest is Test {
         vm.stopPrank();
     }
 
-function testEndToEndSwapAndFarm() public {
-    // Step 1: User1 approves router for tokens before adding liquidity
-    vm.startPrank(user1);
-    MockERC20(token0).approve(address(router), type(uint256).max);
-    MockERC20(token1).approve(address(router), type(uint256).max);
-    vm.stopPrank();
+    function testEndToEndSwapAndFarm() public {
+        // Step 1: User1 approves router for tokens before adding liquidity
+        vm.startPrank(user1);
+        MockERC20(token0).approve(address(router), type(uint256).max);
+        MockERC20(token1).approve(address(router), type(uint256).max);
+        vm.stopPrank();
 
-    // Step 2: User1 adds liquidity via router
-    uint256 addAmount = 100 ether;
-    vm.prank(user1);
-    (address pair, uint256 liquidity) = router.addLiquidity(token0, token1, addAmount, addAmount);
+        // Step 2: User1 adds liquidity via router
+        uint256 addAmount = 100 ether;
+        vm.prank(user1);
+        (address pair, uint256 liquidity) = router.addLiquidity(token0, token1, addAmount, addAmount);
 
-    // Step 3: Assert LP balance
-    uint256 lpBalance = ERC20(pair).balanceOf(user1);
-    assertGt(lpBalance, 0, "No LP tokens minted");
+        // Step 3: Assert LP balance
+        uint256 lpBalance = ERC20(pair).balanceOf(user1);
+        assertGt(lpBalance, 0, "No LP tokens minted");
 
-    // Step 4: User1 swaps a small amount via router
-    vm.prank(user1);
-    router.swap(token0, token1, 0.1 ether, 1, block.timestamp + 600, address(this));
+        // Step 4: User1 swaps a small amount via router
+        vm.prank(user1);
+        router.swap(token0, token1, 0.1 ether, 1, block.timestamp + 600, address(this));
 
-    // Step 5: Governance adds farm pool
-    vm.prank(governance);
-    farm.addPool(pair, token0, 0.01 ether);
+        // Step 5: Governance adds farm pool
+        vm.prank(governance);
+        farm.addPool(pair, token0, 0.01 ether);
 
-    // ✅ Step 6: User1 approves LP token (pair) for farm
-    vm.prank(user1);
-    ERC20(pair).approve(address(farm), type(uint256).max);
+        // ✅ Step 6: User1 approves LP token (pair) for farm
+        vm.prank(user1);
+        ERC20(pair).approve(address(farm), type(uint256).max);
 
-    // Step 7: User1 stakes LP in farm
-    vm.prank(user1);
-    farm.stake(0, 0.1 ether);
+        // Step 7: User1 stakes LP in farm
+        vm.prank(user1);
+        farm.stake(0, 0.1 ether);
 
-    // Step 8: Advance time to accrue rewards
-    vm.roll(block.number + 100);
+        // Step 8: Advance time to accrue rewards
+        vm.roll(block.number + 100);
 
-    // Step 9: User1 claims rewards
-    vm.prank(user1);
-    farm.claimReward(0);
+        // Step 9: User1 claims rewards
+        vm.prank(user1);
+        farm.claimReward(0);
 
-    // Step 10: User1 unstakes
-    vm.prank(user1);
-    farm.unstake(0, 0.1 ether);
+        // Step 10: User1 unstakes
+        vm.prank(user1);
+        farm.unstake(0, 0.1 ether);
 
-    // Step 11: Assert LP balance restored
-    assertGt(ERC20(pair).balanceOf(user1), 0);
-}
-
+        // Step 11: Assert LP balance restored
+        assertGt(ERC20(pair).balanceOf(user1), 0);
+    }
 
     function testEndToEndLendAndBorrow() public {
         // Step 1: User1 adds initial liquidity and receives LP tokens
@@ -224,43 +230,42 @@ function testEndToEndSwapAndFarm() public {
         assertEq(lending.borrows(user1, token0), 0);
     }
 
-function testEndToEndLimitOrder() public {
-    uint256 addAmount = 100 ether;
-    uint256 orderAmount = 0.1 ether;
-    uint256 expectedMinOut = 0.09 ether;
+    function testEndToEndLimitOrder() public {
+        uint256 addAmount = 100 ether;
+        uint256 orderAmount = 0.1 ether;
+        uint256 expectedMinOut = 0.09 ether;
 
-    // Step 1: User1 approves router and adds liquidity to create pair
-    vm.startPrank(user1);
-    MockERC20(token0).approve(address(router), type(uint256).max);
-    MockERC20(token1).approve(address(router), type(uint256).max);
-    router.addLiquidity(token0, token1, addAmount, addAmount);
-    vm.stopPrank();
+        // Step 1: User1 approves router and adds liquidity to create pair
+        vm.startPrank(user1);
+        MockERC20(token0).approve(address(router), type(uint256).max);
+        MockERC20(token1).approve(address(router), type(uint256).max);
+        router.addLiquidity(token0, token1, addAmount, addAmount);
+        vm.stopPrank();
 
-    // Step 2: User1 approves limitOrder contract to pull orderAmount
-    vm.prank(user1);
-    MockERC20(token0).approve(address(limitOrder), orderAmount);
+        // Step 2: User1 approves limitOrder contract to pull orderAmount
+        vm.prank(user1);
+        MockERC20(token0).approve(address(limitOrder), orderAmount);
 
-    // Step 3: User1 places a limit order
-    vm.prank(user1);
-    uint256 orderId = limitOrder.placeOrder(token0, token1, orderAmount, expectedMinOut);
+        // Step 3: User1 places a limit order
+        vm.prank(user1);
+        uint256 orderId = limitOrder.placeOrder(token0, token1, orderAmount, expectedMinOut);
 
-    // Step 4: Allow limitOrder contract to use router for execution
-    // This step is only needed if limitOrder internally calls router.swap(...)
-    vm.prank(address(limitOrder));
-    MockERC20(token0).approve(address(router), orderAmount);
+        // Step 4: Allow limitOrder contract to use router for execution
+        // This step is only needed if limitOrder internally calls router.swap(...)
+        vm.prank(address(limitOrder));
+        MockERC20(token0).approve(address(router), orderAmount);
 
-    // Step 5: Governance executes the order
-    vm.prank(governance);
-    limitOrder.executeOrder(orderId, expectedMinOut);
+        // Step 5: Governance executes the order
+        vm.prank(governance);
+        limitOrder.executeOrder(orderId, expectedMinOut);
 
-    // Step 6: Check post-conditions
-    uint256 received = MockERC20(token1).balanceOf(user1);
-    assertGt(received, 0, "User should receive token1");
+        // Step 6: Check post-conditions
+        uint256 received = MockERC20(token1).balanceOf(user1);
+        assertGt(received, 0, "User should receive token1");
 
-    uint256 protocolFee = limitOrder.protocolFeesAccrued(token1);
-    assertGt(protocolFee, 0, "Protocol fee should be accrued in token1");
-}
-
+        uint256 protocolFee = limitOrder.protocolFeesAccrued(token1);
+        assertGt(protocolFee, 0, "Protocol fee should be accrued in token1");
+    }
 
     function testEndToEndGovernanceChange() public {
         // Transfer governance to user2
@@ -291,99 +296,99 @@ function testEndToEndLimitOrder() public {
         assertEq(keccak256(bytes(lending.tokenDenoms(token0))), keccak256(bytes("TK0_DENOM")));
     }
 
-function testEndToEndUserScenario() public {
-    uint256 addAmount = 100 ether;
+    function testEndToEndUserScenario() public {
+        uint256 addAmount = 100 ether;
 
-    // Step 1: User1 approves router and adds liquidity
-    vm.startPrank(user1);
-    MockERC20(token0).approve(address(router), type(uint256).max);
-    MockERC20(token1).approve(address(router), type(uint256).max);
-    vm.stopPrank();
+        // Step 1: User1 approves router and adds liquidity
+        vm.startPrank(user1);
+        MockERC20(token0).approve(address(router), type(uint256).max);
+        MockERC20(token1).approve(address(router), type(uint256).max);
+        vm.stopPrank();
 
-    vm.prank(user1);
-    (address pair, uint256 liquidity) = router.addLiquidity(token0, token1, addAmount, addAmount);
+        vm.prank(user1);
+        (address pair, uint256 liquidity) = router.addLiquidity(token0, token1, addAmount, addAmount);
 
-    // Step 2: Swap via router
-    vm.prank(user1);
-    router.swap(token0, token1, 0.1 ether, 1, block.timestamp + 600, address(this));
+        // Step 2: Swap via router
+        vm.prank(user1);
+        router.swap(token0, token1, 0.1 ether, 1, block.timestamp + 600, address(this));
 
-    // Step 3: Governance adds LP token to yield farm
-    vm.prank(governance);
-    farm.addPool(pair, token0, 0.01 ether); // poolId = 0
+        // Step 3: Governance adds LP token to yield farm
+        vm.prank(governance);
+        farm.addPool(pair, token0, 0.01 ether); // poolId = 0
 
-    // Step 4: User1 approves LP token to farm and stakes
-    vm.startPrank(user1);
-    ERC20(pair).approve(address(farm), type(uint256).max);
-    farm.stake(0, 0.1 ether);
-    vm.stopPrank();
+        // Step 4: User1 approves LP token to farm and stakes
+        vm.startPrank(user1);
+        ERC20(pair).approve(address(farm), type(uint256).max);
+        farm.stake(0, 0.1 ether);
+        vm.stopPrank();
 
-    // Step 5: Governance sets token denoms
-    vm.prank(governance);
-    lending.setTokenDenom(address(amm), "LP_DENOM");
-    vm.prank(governance);
-    lending.setTokenDenom(token0, "TK0_DENOM");
+        // Step 5: Governance sets token denoms
+        vm.prank(governance);
+        lending.setTokenDenom(address(amm), "LP_DENOM");
+        vm.prank(governance);
+        lending.setTokenDenom(token0, "TK0_DENOM");
 
-    // --- NEW: Add pool for token0 and fund the farm with token0 ---
-    // Add a pool for token0 if not already present (assume poolId = 1)
-    vm.prank(governance);
-    farm.addPool(token0, token0, 1 ether); // poolId = 1
-    // Mint token0 to the farm
-    MockERC20(token0).mint(address(farm), 100 ether);
-    // Stake some token0 to populate availableReserve
-    vm.startPrank(user1);
-    MockERC20(token0).approve(address(farm), 10 ether);
-    farm.stake(1, 10 ether);
-    vm.stopPrank();
-    // --- END NEW ---
+        // --- NEW: Add pool for token0 and fund the farm with token0 ---
+        // Add a pool for token0 if not already present (assume poolId = 1)
+        vm.prank(governance);
+        farm.addPool(token0, token0, 1 ether); // poolId = 1
+        // Mint token0 to the farm
+        MockERC20(token0).mint(address(farm), 100 ether);
+        // Stake some token0 to populate availableReserve
+        vm.startPrank(user1);
+        MockERC20(token0).approve(address(farm), 10 ether);
+        farm.stake(1, 10 ether);
+        vm.stopPrank();
+        // --- END NEW ---
 
-    // Step 6: Authorize lender on farm (if `lendOut()` is protected)
-    vm.prank(governance);
-    farm.setAuthorizedLender(address(lending), true);
+        // Step 6: Authorize lender on farm (if `lendOut()` is protected)
+        vm.prank(governance);
+        farm.setAuthorizedLender(address(lending), true);
 
-    // --- NEW: Use token0 as collateral for lending ---
-    uint256 collateralAmount = 10 ether;
-    uint256 borrowAmount = 0.01 ether;
-    // Ensure user1 has enough token0 and has approved lending contract
-    vm.startPrank(user1);
-    MockERC20(token0).approve(address(lending), collateralAmount);
-    emit log_named_uint("user1 token0 balance before depositAndBorrow", MockERC20(token0).balanceOf(user1));
-    emit log_named_uint("lending contract token0 balance before depositAndBorrow", MockERC20(token0).balanceOf(address(lending)));
-    lending.depositAndBorrow(token0, collateralAmount, token0, borrowAmount);
-    emit log_named_uint("user1 token0 balance after depositAndBorrow", MockERC20(token0).balanceOf(user1));
-    emit log_named_uint("lending contract token0 balance after depositAndBorrow", MockERC20(token0).balanceOf(address(lending)));
-    vm.stopPrank();
-    // --- END NEW ---
+        // --- NEW: Use token0 as collateral for lending ---
+        uint256 collateralAmount = 10 ether;
+        uint256 borrowAmount = 0.01 ether;
+        // Ensure user1 has enough token0 and has approved lending contract
+        vm.startPrank(user1);
+        MockERC20(token0).approve(address(lending), collateralAmount);
+        emit log_named_uint("user1 token0 balance before depositAndBorrow", MockERC20(token0).balanceOf(user1));
+        emit log_named_uint("lending contract token0 balance before depositAndBorrow", MockERC20(token0).balanceOf(address(lending)));
+        lending.depositAndBorrow(token0, collateralAmount, token0, borrowAmount);
+        emit log_named_uint("user1 token0 balance after depositAndBorrow", MockERC20(token0).balanceOf(user1));
+        emit log_named_uint("lending contract token0 balance after depositAndBorrow", MockERC20(token0).balanceOf(address(lending)));
+        vm.stopPrank();
+        // --- END NEW ---
 
-    // Step 7: Claim reward
-    vm.roll(block.number + 100);
-    vm.prank(user1);
-    farm.claimReward(0);
+        // Step 7: Claim reward
+        vm.roll(block.number + 100);
+        vm.prank(user1);
+        farm.claimReward(0);
 
-    // Step 8: Unstake LP tokens
-    vm.prank(user1);
-    farm.unstake(0, 0.1 ether);
+        // Step 8: Unstake LP tokens
+        vm.prank(user1);
+        farm.unstake(0, 0.1 ether);
 
-    // Step 9: Place and execute a limit order
-    uint256 orderAmount = 0.01 ether;
-    vm.prank(user1);
-    MockERC20(token0).approve(address(limitOrder), orderAmount);
+        // Step 9: Place and execute a limit order
+        uint256 orderAmount = 0.01 ether;
+        vm.prank(user1);
+        MockERC20(token0).approve(address(limitOrder), orderAmount);
 
-    vm.prank(user1);
-    uint256 orderId = limitOrder.placeOrder(token0, token1, orderAmount, 0.009 ether);
+        vm.prank(user1);
+        uint256 orderId = limitOrder.placeOrder(token0, token1, orderAmount, 0.009 ether);
 
-    // Approve router from limitOrder (if needed for swap)
-    vm.prank(address(limitOrder));
-    MockERC20(token0).approve(address(router), orderAmount);
+        // Approve router from limitOrder (if needed for swap)
+        vm.prank(address(limitOrder));
+        MockERC20(token0).approve(address(router), orderAmount);
 
-    // Execute order by governance
-    vm.prank(governance);
-    limitOrder.executeOrder(orderId, 0.009 ether);
+        // Execute order by governance
+        vm.prank(governance);
+        limitOrder.executeOrder(orderId, 0.009 ether);
 
-    // Final assertions
-    uint256 received = MockERC20(token1).balanceOf(user1);
-    assertGt(received, 0, "User should receive token1");
-    assertGt(limitOrder.protocolFeesAccrued(token1), 0, "Protocol fee should be accrued");
-}
+        // Final assertions
+        uint256 received = MockERC20(token1).balanceOf(user1);
+        assertGt(received, 0, "User should receive token1");
+        assertGt(limitOrder.protocolFeesAccrued(token1), 0, "Protocol fee should be accrued");
+    }
 
     function testStakeBorrowRepayClaimFlow() public {
         uint256 addAmount = 100 ether;

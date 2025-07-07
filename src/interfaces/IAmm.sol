@@ -68,3 +68,8 @@ interface IBarukAMM {
     function pause() external;
     function unpause() external;
 }
+
+interface IBarukFactory {
+    function createPair(address token0, address token1) external returns (address pair);
+    function getPair(address token0, address token1) external view returns (address pair);
+}

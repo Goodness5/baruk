@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import "./AMM.sol";
 import "./interfaces/IAmm.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
+// import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 interface IBarukFlashSwapCallback {
@@ -12,6 +11,10 @@ interface IBarukFlashSwapCallback {
 }
 
 contract BarukRouter is ReentrancyGuard {
+    IBarukFactory public factory;
+    address public governance;
+    bool public paused;
+
     // Pair tracking
     mapping(address => mapping(address => address)) public getPair;
     address[] public allPairs;
@@ -32,13 +35,10 @@ contract BarukRouter is ReentrancyGuard {
     error PairExists();
     error PairNotFound();
     error InvalidToken();
-    error InsufficientLiquidity();
-    error SlippageTooHigh();
+    
+    
     error TransferFailed();
     error TransactionExpired();
-
-    address public governance;
-    bool public paused;
 
     modifier onlyGovernance() {
         require(msg.sender == governance, "Not governance");
@@ -49,7 +49,8 @@ contract BarukRouter is ReentrancyGuard {
         _;
     }
 
-    constructor() {
+    constructor(address _factory) {
+        factory = IBarukFactory(_factory);
         governance = msg.sender;
     }
 
@@ -75,7 +76,7 @@ contract BarukRouter is ReentrancyGuard {
         (address token0, address token1) = tokenA < tokenB ? (tokenA, tokenB) : (tokenB, tokenA);
         if (token0 == address(0)) revert ZeroAddress();
         if (getPair[token0][token1] != address(0)) revert PairExists();
-        pair = address(new BarukAMM(token0, token1));
+        pair = factory.createPair(token0, token1);
         getPair[token0][token1] = pair;
         getPair[token1][token0] = pair; // bi-directional lookup
         allPairs.push(pair);
@@ -93,7 +94,7 @@ contract BarukRouter is ReentrancyGuard {
         uint256 amountA,
         uint256 amountB
     ) external nonReentrant whenNotPaused returns (address pair, uint256 liquidity) {
-        pair = getPair[tokenA][tokenB];
+        pair = factory.getPair(tokenA, tokenB);
         if (pair == address(0)) {
             pair = createPair(tokenA, tokenB);
         }
@@ -111,7 +112,7 @@ contract BarukRouter is ReentrancyGuard {
         address tokenB,
         uint256 liquidity
     ) external nonReentrant whenNotPaused returns (uint256 amountA, uint256 amountB) {
-        address pair = getPair[tokenA][tokenB];
+        address pair = factory.getPair(tokenA, tokenB);
         if (pair == address(0)) revert PairNotFound();
         (amountA, amountB) = IBarukAMM(pair).removeLiquidity(liquidity);
         emit LiquidityRemoved(msg.sender, pair, amountA, amountB, liquidity);
@@ -127,32 +128,32 @@ contract BarukRouter is ReentrancyGuard {
         address recipient
     ) external nonReentrant whenNotPaused returns (uint256 amountOut) {
         if (block.timestamp > deadline) revert TransactionExpired();
-        address pair = getPair[tokenIn][tokenOut];
+        address pair = factory.getPair(tokenIn, tokenOut);
         if (pair == address(0)) revert PairNotFound();
         IERC20(tokenIn).transferFrom(msg.sender, pair, amountIn);
         amountOut = IBarukAMM(pair).publicSwap(amountIn, tokenIn, minAmountOut, recipient);
         emit Swap(msg.sender, pair, amountIn, amountOut, tokenIn, tokenOut);
     }
 
-    function swapWithPermit(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn,
-        uint256 minAmountOut,
-        uint256 deadline,
-        uint8 v,
-        bytes32 r,
-        bytes32 s,
-        address recipient
-    ) external nonReentrant whenNotPaused returns (uint256 amountOut) {
-        if (block.timestamp > deadline) revert TransactionExpired();
-        address pair = getPair[tokenIn][tokenOut];
-        if (pair == address(0)) revert PairNotFound();
-        IERC20Permit(tokenIn).permit(msg.sender, pair, amountIn, deadline, v, r, s);
-        IERC20(tokenIn).transferFrom(msg.sender, pair, amountIn);
-        amountOut = IBarukAMM(pair).publicSwap(amountIn, tokenIn, minAmountOut, recipient);
-        emit Swap(msg.sender, pair, amountIn, amountOut, tokenIn, tokenOut);
-    }
+    // function swapWithPermit(
+    //     address tokenIn,
+    //     address tokenOut,
+    //     uint256 amountIn,
+    //     uint256 minAmountOut,
+    //     uint256 deadline,
+    //     uint8 v,
+    //     bytes32 r,
+    //     bytes32 s,
+    //     address recipient
+    // ) external nonReentrant whenNotPaused returns (uint256 amountOut) {
+    //     if (block.timestamp > deadline) revert TransactionExpired();
+    //     address pair = getPair[tokenIn][tokenOut];
+    //     if (pair == address(0)) revert PairNotFound();
+    //     IERC20Permit(tokenIn).permit(msg.sender, pair, amountIn, deadline, v, r, s);
+    //     IERC20(tokenIn).transferFrom(msg.sender, pair, amountIn);
+    //     amountOut = IBarukAMM(pair).publicSwap(amountIn, tokenIn, minAmountOut, recipient);
+    //     emit Swap(msg.sender, pair, amountIn, amountOut, tokenIn, tokenOut);
+    // }
 
     // --- Flash Swap ---
     function flashSwap(
@@ -163,7 +164,7 @@ contract BarukRouter is ReentrancyGuard {
         address to,
         bytes calldata data
     ) external nonReentrant whenNotPaused {
-        address pair = getPair[tokenA][tokenB];
+        address pair = factory.getPair(tokenA, tokenB);
         if (pair == address(0)) revert PairNotFound();
         address token0 = IBarukAMM(pair).token0();
         address token1 = IBarukAMM(pair).token1();
