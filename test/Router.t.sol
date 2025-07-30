@@ -4,6 +4,7 @@ pragma solidity ^0.8.19;
 import "forge-std/Test.sol";
 import "../src/Router.sol";
 import "../src/AMM.sol";
+import "../src/BarukAMMFactory.sol";
 import "./mocks/MockERC20.sol";
 
 contract RouterTest is Test {
@@ -28,7 +29,10 @@ contract RouterTest is Test {
         MockERC20(token0).mint(user2, 1_000_000 ether);
         MockERC20(token1).mint(user2, 1_000_000 ether);
         MockERC20(token2).mint(user2, 1_000_000 ether);
-        router = new BarukRouter();
+        // Deploy AMM implementation and factory
+        BarukAMM ammImpl = new BarukAMM();
+        BarukAMMFactory factory = new BarukAMMFactory(address(ammImpl));
+        router = new BarukRouter(address(factory));
         vm.prank(user1);
         MockERC20(token0).approve(address(router), type(uint256).max);
         vm.prank(user1);

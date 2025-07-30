@@ -47,7 +47,9 @@ contract AMMTest is Test {
         MockERC20(token0).mint(user2, 1_000_000 ether);
         MockERC20(token1).mint(user2, 1_000_000 ether);
         // Deploy AMM
-        amm = new BarukAMM(token0, token1);
+        amm = new BarukAMM();
+        amm.initialize(token0, token1);
+        amm.setGovernance(governance);
         // Approve AMM for both tokens from user1 and user2
         vm.prank(user1);
         MockERC20(token0).approve(address(amm), type(uint256).max);
@@ -608,7 +610,8 @@ contract AMMTest is Test {
         if (t0 >= t1) {
             (t0, t1) = (t1, t0);
         }
-        BarukAMM badAmm = new BarukAMM(t0, t1);
+        BarukAMM badAmm = new BarukAMM();
+        badAmm.initialize(t0, t1);
         vm.startPrank(user1);
         MockERC20(t0).approve(address(badAmm), 1000 ether);
         MockERC20(t1).approve(address(badAmm), 1000 ether);
